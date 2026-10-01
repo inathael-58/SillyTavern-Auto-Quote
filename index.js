@@ -18,7 +18,7 @@ import { BLOCKQUOTE, DEFAULT_PAIRS, DEFAULT_TOOLBAR, buildTable, correctQuote, o
 
 const MODULE = 'auto_quote';
 const LOG = '[AutoQuote]';
-const VERSION = '1.0.0'; // keep in sync with manifest.json
+const VERSION = '1.1.0'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 
 const DEFAULTS = Object.freeze({
@@ -29,11 +29,13 @@ const DEFAULTS = Object.freeze({
     straightToCurly: false,   // " → “ / ”
     toolbar: true,
     closeButton: true,
+    undoButton: true,         // ↶ / ↷ on the bar (phone keyboards rarely have undo)
     spaceBeforeOpen: true,    // tapping an opener right after a word adds a space first
     editMessages: true,       // also in message edit boxes
     otherFields: false,       // also in other text fields (card, lorebook, notes…)
     pairs: DEFAULT_PAIRS,
     toolbarItems: DEFAULT_TOOLBAR,
+    sample: '',               // example tab text; '' = built-in
 });
 
 /** Never touched, whatever the settings: code and script editors. */
@@ -78,6 +80,7 @@ function inScope(el) {
  */
 let busy = false;
 function replaceRange(el, start, end, text, selStart = start + text.length, selEnd = selStart) {
+    const before = el.value;
     busy = true;
     try {
         if (document.activeElement !== el) el.focus({ preventScroll: true });
@@ -96,9 +99,79 @@ function replaceRange(el, start, end, text, selStart = start + text.length, selE
     } finally {
         busy = false;
     }
+    histRecord(el, before, 'edit');
     last = { el, value: el.value };
     spaceMark = null;
     scheduleBarUpdate();
+}
+
+// ---------------------------------------------------------------- undo / redo (send box)
+//
+// Our own history, because the browser's undo stack can't be reached from a
+// button on phones. Typing is grouped into steps that end at a space or a
+// one-second pause; every edit we make (closing, wrapping…) is its own step.
+
+const HISTORY_MAX = 200;
+const GROUP_MS = 1000;
+const hist = { values: [], index: -1, at: 0, typing: false };
+
+function histPush(v) {
+    hist.values.length = hist.index + 1;
+    hist.values.push(v);
+    if (hist.values.length > HISTORY_MAX) hist.values.shift();
+    hist.index = hist.values.length - 1;
+}
+
+/** `prev` is the value before this change, when known. */
+function histRecord(el, prev, kind) {
+    if (!isSendBox(el)) return;
+    const v = el.value;
+    if (hist.index < 0) histPush(prev ?? '');
+    // changed behind our back (message sent, another extension, a draft restored)
+    if (prev !== null && hist.values[hist.index] !== prev) { histPush(prev); hist.typing = false; }
+    if (v === hist.values[hist.index]) return;
+    const now = Date.now();
+    if (kind === 'type' && hist.typing && now - hist.at < GROUP_MS) hist.values[hist.index] = v;
+    else histPush(v);
+    hist.typing = kind === 'type' && !/\s$/.test(v.slice(0, el.selectionStart));
+    hist.at = now;
+}
+
+const canUndo = el => hist.index > 0 || (hist.index === 0 && el.value !== hist.values[0]);
+const canRedo = el => hist.index < hist.values.length - 1 && el.value === hist.values[hist.index];
+
+/** Put `target` in the box with the caret where the change was. */
+function histApply(el, target, from) {
+    let p = 0;
+    while (p < target.length && p < from.length && target[p] === from[p]) p++;
+    let q = 0;
+    while (q < target.length - p && q < from.length - p && target[target.length - 1 - q] === from[from.length - 1 - q]) q++;
+    busy = true;
+    try {
+        el.value = target;
+        el.setSelectionRange(target.length - q, target.length - q);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+    } finally {
+        busy = false;
+    }
+    hist.typing = false;
+    last = { el, value: el.value };
+    spaceMark = null;
+    scheduleBarUpdate();
+}
+
+function undo(el) {
+    if (hist.index < 0) return;
+    if (el.value !== hist.values[hist.index]) histPush(el.value);
+    if (hist.index === 0) return;
+    hist.index--;
+    histApply(el, hist.values[hist.index], hist.values[hist.index + 1]);
+}
+
+function redo(el) {
+    if (!canRedo(el)) return;
+    hist.index++;
+    histApply(el, hist.values[hist.index], hist.values[hist.index - 1]);
 }
 
 // ---------------------------------------------------------------- typing
@@ -124,6 +197,7 @@ function onInput(e) {
     const prev = last.el === el ? last.value : null;
     const v = el.value;
     last = { el, value: v };
+    histRecord(el, prev, 'type');
     if (!inScope(el)) { spaceMark = null; return; }
     scheduleBarUpdate();
 
@@ -197,7 +271,11 @@ function renderBar() {
         bar = document.createElement('div');
         bar.id = 'aq_bar';
         bar.hidden = true;
-        bar.innerHTML = '<div class="aq_row"><div class="aq_scroll"></div><button type="button" class="aq_btn aq_close" tabindex="-1" title="ปิดเครื่องหมายที่ค้างอยู่"></button></div>';
+        bar.innerHTML = '<div class="aq_row">'
+            + '<button type="button" class="aq_btn aq_undo" tabindex="-1" title="เลิกทำ (Undo)"><i class="fa-solid fa-rotate-left"></i></button>'
+            + '<button type="button" class="aq_btn aq_redo" tabindex="-1" title="ทำซ้ำ (Redo)"><i class="fa-solid fa-rotate-right"></i></button>'
+            + '<div class="aq_scroll"></div>'
+            + '<button type="button" class="aq_btn aq_close" tabindex="-1" title="ปิดเครื่องหมายที่ค้างอยู่"></button></div>';
         // keep focus (and the keyboard, and the selection) in the send box
         bar.addEventListener('mousedown', e => e.preventDefault());
         bar.addEventListener('click', onBarClick);
@@ -240,6 +318,11 @@ function updateBar() {
     const hit = settings().closeButton && !selected && inScope(el) ? pendingClose(el.value.slice(0, el.selectionStart), table) : null;
     btn.hidden = !hit;
     if (hit) btn.textContent = hit.close;
+    const showUndo = settings().undoButton;
+    const u = bar.querySelector('.aq_undo'), r = bar.querySelector('.aq_redo');
+    u.hidden = !showUndo;
+    u.classList.toggle('aq_off', !canUndo(el)); // not `disabled`: taps on a disabled button would move focus out of the box
+    r.hidden = !showUndo || !canRedo(el);
 }
 
 function onBarClick(e) {
@@ -250,6 +333,8 @@ function onBarClick(e) {
     const s = settings();
     const start = el.selectionStart, end = el.selectionEnd;
 
+    if (btn.classList.contains('aq_undo')) { undo(el); return; }
+    if (btn.classList.contains('aq_redo')) { redo(el); return; }
     if (btn.classList.contains('aq_close')) {
         closeAt(el, end, end, false);
         return;
@@ -286,6 +371,11 @@ function renderSettings() {
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">
+                <div class="aq_tabs">
+                    <div class="aq_tab aq_active" data-tab="settings"><i class="fa-solid fa-sliders"></i> ตั้งค่า</div>
+                    <div class="aq_tab" data-tab="example"><i class="fa-solid fa-palette"></i> ตัวอย่างการแสดงผล</div>
+                </div>
+                <div class="aq_page" data-page="settings">
                 <label class="checkbox_label"><input type="checkbox" id="aq_enabled"> เปิดใช้งาน</label>
 
                 <div class="aq_set_title">ตอนพิมพ์</div>
@@ -298,6 +388,7 @@ function renderSettings() {
                 <div class="aq_set_title">แถบเครื่องหมายเหนือช่องพิมพ์</div>
                 <label class="checkbox_label"><input type="checkbox" id="aq_toolbar"> แสดงตอนเคอร์เซอร์อยู่ในช่องพิมพ์</label>
                 <label class="checkbox_label aq_indent"><input type="checkbox" id="aq_closebtn"> ปุ่มปิดเครื่องหมายที่ค้างอยู่ (ขวาสุด)</label>
+                <label class="checkbox_label aq_indent"><input type="checkbox" id="aq_undobtn"> ปุ่มเลิกทำ / ทำซ้ำ (ซ้ายสุด)</label>
                 <label class="checkbox_label aq_indent"><input type="checkbox" id="aq_spacebefore"> เว้นวรรคให้ก่อน ถ้ากดตัวเปิดต่อท้ายคำ</label>
                 <label class="aq_field">ปุ่มบนแถบ <small>(ตัวเปิดคั่นด้วยช่องว่าง · <code>&gt;</code> = blockquote)</small>
                     <input type="text" id="aq_items" class="text_pole" data-aq-off autocomplete="off">
@@ -314,6 +405,29 @@ function renderSettings() {
                 <textarea id="aq_pairs" class="text_pole monospace" rows="8" data-aq-off spellcheck="false"></textarea>
                 <div class="aq_btns">
                     <div id="aq_reset" class="menu_button"><i class="fa-solid fa-rotate-left"></i> คืนค่าเริ่มต้น</div>
+                </div>
+                </div>
+
+                <div class="aq_page" data-page="example" hidden>
+                    <small class="aq_note">ข้อความด้านล่างผ่านตัวแปลง Markdown ตัวเดียวกับแชท (รวม regex ที่ใช้ตอนแสดงผล) และใช้โครงสร้างข้อความแชทจริง แก้ Custom CSS แล้วเห็นผลทันที</small>
+                    <div class="aq_btns">
+                        <div class="aq_seg">
+                            <div class="menu_button aq_who aq_active" data-who="char"><i class="fa-solid fa-robot"></i> ตัวละคร</div>
+                            <div class="menu_button aq_who" data-who="user"><i class="fa-solid fa-user"></i> ผู้ใช้</div>
+                        </div>
+                        <div id="aq_ex_chat" class="menu_button" title="ใส่ข้อความตัวอย่างชั่วคราวท้ายแชท สำหรับ CSS ที่เขียนแบบ #chat .mes … (ไม่บันทึกลงแชท หายเองตอนส่งข้อความหรือเปลี่ยนแชท)"><i class="fa-solid fa-comment-dots"></i> แสดงในแชท</div>
+                        <div id="aq_ex_editbtn" class="menu_button"><i class="fa-solid fa-pen"></i> แก้ข้อความตัวอย่าง</div>
+                    </div>
+                    <div id="aq_ex_editor" hidden>
+                        <textarea id="aq_ex_text" class="text_pole" rows="10" data-aq-off spellcheck="false"></textarea>
+                        <div class="aq_btns">
+                            <div id="aq_ex_reset" class="menu_button"><i class="fa-solid fa-rotate-left"></i> ใช้ข้อความเริ่มต้น</div>
+                        </div>
+                    </div>
+                    <div id="aq_ex_preview" class="aq_ex_preview"></div>
+
+                    <div class="aq_set_title">สีจากธีม <small class="aq_note aq_inline">(ตัวแปร CSS · แตะเพื่อคัดลอกชื่อ)</small> <i id="aq_ex_refresh" class="fa-solid fa-arrows-rotate aq_icon_btn" title="อ่านค่าใหม่"></i></div>
+                    <div id="aq_ex_vars" class="aq_ex_vars"></div>
                 </div>
             </div>
         </div>
@@ -332,6 +446,7 @@ function renderSettings() {
     bind('aq_straight', 'straightToCurly');
     bind('aq_toolbar', 'toolbar', refreshBar);
     bind('aq_closebtn', 'closeButton', updateBar);
+    bind('aq_undobtn', 'undoButton', updateBar);
     bind('aq_spacebefore', 'spaceBeforeOpen');
     bind('aq_edit', 'editMessages');
     bind('aq_other', 'otherFields');
@@ -351,6 +466,168 @@ function renderSettings() {
         rebuildTable();
         renderBar();
     });
+
+    const root = $id('aq_settings');
+    root.querySelectorAll('.aq_tab').forEach(tab => tab.addEventListener('click', () => {
+        root.querySelectorAll('.aq_tab').forEach(t => t.classList.toggle('aq_active', t === tab));
+        root.querySelectorAll('.aq_page').forEach(p => { p.hidden = p.dataset.page !== tab.dataset.tab; });
+        if (tab.dataset.tab === 'example') renderExample();
+    }));
+    root.querySelectorAll('.aq_who').forEach(b => b.addEventListener('click', () => {
+        exampleWho = b.dataset.who;
+        root.querySelectorAll('.aq_who').forEach(x => x.classList.toggle('aq_active', x === b));
+        renderExample();
+    }));
+    const exText = /** @type {HTMLTextAreaElement} */ ($id('aq_ex_text'));
+    exText.value = s.sample || DEFAULT_SAMPLE;
+    $id('aq_ex_editbtn').addEventListener('click', () => { $id('aq_ex_editor').hidden = !$id('aq_ex_editor').hidden; });
+    exText.addEventListener('input', () => { s.sample = exText.value === DEFAULT_SAMPLE ? '' : exText.value; save(); renderExampleSoon(); });
+    $id('aq_ex_reset').addEventListener('click', () => { exText.value = DEFAULT_SAMPLE; s.sample = ''; save(); renderExample(); });
+    $id('aq_ex_chat').addEventListener('click', showExampleInChat);
+    $id('aq_ex_refresh').addEventListener('click', renderThemeVars);
+    $id('aq_ex_vars').addEventListener('click', e => {
+        const row = e.target.closest('[data-var]');
+        if (!row) return;
+        navigator.clipboard?.writeText(`var(${row.dataset.var})`).then(() => globalThis.toastr?.success(`คัดลอก var(${row.dataset.var}) แล้ว`, 'Auto Quote'), () => {});
+    });
+}
+
+// ---------------------------------------------------------------- example tab
+//
+// A chat message built from SillyTavern's own message template and formatted
+// by its own messageFormatting(), so theme CSS hits it the way it hits chat.
+
+const DEFAULT_SAMPLE = [
+    '# หัวข้อ (h1)',
+    '## หัวข้อรอง (h2)',
+    '### หัวข้อย่อย (h3)',
+    '',
+    'บรรยายธรรมดา *ตัวเอียง* **ตัวหนา** ***หนาเอียง*** __ขีดเส้นใต้__ ~~ขีดฆ่า~~ `โค้ด`',
+    '',
+    '"straight quote" “curly quote” «guillemets» 「かぎかっこ」 『二重かぎかっこ』',
+    '',
+    '*“คำพูดในตัวเอียง”* · “คำพูดที่มี *ตัวเอียง* ข้างใน” · **“คำพูดตัวหนา”** · “คำพูดที่มี **ตัวหนา** ข้างใน”',
+    '',
+    '*บรรยายตัวเอียงที่มี “คำพูด” อยู่ข้างใน* (วงเล็บ) 【วงเล็บญี่ปุ่น】',
+    '',
+    '> blockquote — *ตัวเอียง* **ตัวหนา** และ “คำพูด”',
+    '',
+    '- รายการ',
+    '- รายการที่มี “คำพูด”',
+    '  1. รายการซ้อน',
+    '',
+    '| หัวตาราง | หัวตาราง |',
+    '|---|---|',
+    '| ช่อง | “คำพูด” |',
+    '',
+    '[ลิงก์](https://github.com/SillyTavern/SillyTavern)',
+    '',
+    '---',
+    '',
+    '```',
+    'code block',
+    '```',
+].join('\n');
+
+let exampleWho = 'char';
+
+/** Avatar of the latest message from that side, so the example looks like this chat. */
+function exampleAvatar(isUser) {
+    const img = [...document.querySelectorAll(`#chat .mes[is_user="${isUser}"]:not(.aq_preview_mes) .avatar img`)].at(-1);
+    return img?.getAttribute('src') || 'img/ai4.png';
+}
+
+function buildExampleMessage() {
+    const isUser = exampleWho === 'user';
+    const c = ctx();
+    const name = (isUser ? c.name1 : c.name2) || (isUser ? 'User' : 'Character');
+    const text = settings().sample || DEFAULT_SAMPLE;
+    let html;
+    try {
+        html = c.messageFormatting(text, name, false, isUser, -1);
+    } catch (err) {
+        console.warn(LOG, 'messageFormatting failed', err);
+        html = `<p>${esc(text).replace(/\n/g, '<br>')}</p>`;
+    }
+    const tpl = document.querySelector('#message_template .mes');
+    const mes = tpl ? /** @type {HTMLElement} */ (tpl.cloneNode(true)) : document.createElement('div');
+    if (!tpl) mes.innerHTML = '<div class="mes_block"><div class="ch_name"><span class="name_text"></span></div><div class="mes_text"></div></div>';
+    mes.classList.add('mes', 'aq_example_mes');
+    mes.removeAttribute('mesid');
+    mes.setAttribute('ch_name', name);
+    mes.setAttribute('is_user', String(isUser));
+    mes.setAttribute('is_system', 'false');
+    // nothing in here may act on a real message
+    mes.querySelectorAll('.mes_buttons, .mes_edit_buttons, .swipe_left, .swipe_right, .swipeRightBlock, .del_checkbox, .for_checkbox, .mes_bookmark').forEach(n => n.remove());
+    const img = mes.querySelector('.avatar img');
+    if (img) img.setAttribute('src', exampleAvatar(isUser));
+    const nameEl = mes.querySelector('.name_text');
+    if (nameEl) nameEl.textContent = name;
+    const textEl = mes.querySelector('.mes_text');
+    if (textEl) textEl.innerHTML = html;
+    return mes;
+}
+
+function renderExample() {
+    const box = $id('aq_ex_preview');
+    if (!box || $id('aq_settings').querySelector('[data-page="example"]').hidden) return;
+    box.replaceChildren(buildExampleMessage());
+    renderThemeVars();
+}
+
+let exampleTimer = null;
+const renderExampleSoon = () => { clearTimeout(exampleTimer); exampleTimer = setTimeout(renderExample, 300); };
+
+const THEME_VARS = [
+    ['--SmartThemeBodyColor', 'ตัวอักษรหลัก', 'Main Text'],
+    ['--SmartThemeEmColor', 'ตัวเอียง', 'Italics Text'],
+    ['--SmartThemeUnderlineColor', 'ขีดเส้นใต้', 'Underlined Text'],
+    ['--SmartThemeQuoteColor', 'คำพูด', 'Quote Text'],
+    ['--SmartThemeShadowColor', 'เงาตัวอักษร', 'Shadow Color'],
+    ['--SmartThemeChatTintColor', 'พื้นแชท', 'Chat Background'],
+    ['--SmartThemeBlurTintColor', 'พื้นเบลอ', 'UI Background'],
+    ['--SmartThemeUserMesBlurTintColor', 'ข้อความผู้ใช้', 'User Message'],
+    ['--SmartThemeBotMesBlurTintColor', 'ข้อความตัวละคร', 'AI Message'],
+    ['--SmartThemeBorderColor', 'ขอบ', 'UI Border'],
+    ['--SmartThemeBlurStrength', 'ความเบลอ', 'Blur Strength'],
+    ['--mainFontSize', 'ขนาดตัวอักษร', 'Font Scale'],
+    ['--mainFontFamily', 'ฟอนต์หลัก', 'Main Font'],
+];
+
+function renderThemeVars() {
+    const box = $id('aq_ex_vars');
+    if (!box) return;
+    const cs = getComputedStyle(document.documentElement);
+    box.innerHTML = THEME_VARS.map(([v, label, stName]) => {
+        const val = cs.getPropertyValue(v).trim();
+        if (!val) return '';
+        const isColor = /color/i.test(v);
+        return `<div class="aq_var" data-var="${v}" title="${esc(stName)} (User Settings) · แตะเพื่อคัดลอก var(${v})">
+            ${isColor ? `<span class="aq_swatch" style="box-shadow: inset 0 0 0 20px ${esc(val)}"></span>` : '<span class="aq_swatch aq_noswatch"><i class="fa-solid fa-font"></i></span>'}
+            <span class="aq_var_text"><b>${esc(label)}</b><code>${esc(v)}</code><small>${esc(val)}</small></span>
+        </div>`;
+    }).join('');
+}
+
+/** A temporary copy of the example at the end of the chat, for CSS written as #chat .mes …; never saved. */
+function showExampleInChat() {
+    const chat = $id('chat');
+    if (!chat) return;
+    removeExampleFromChat();
+    const mes = buildExampleMessage();
+    mes.classList.add('aq_preview_mes');
+    const close = document.createElement('div');
+    close.className = 'aq_preview_close menu_button';
+    close.innerHTML = '<i class="fa-solid fa-xmark"></i> เอาตัวอย่างออก';
+    close.addEventListener('click', removeExampleFromChat);
+    mes.querySelector('.mes_block')?.append(close);
+    chat.append(mes);
+    mes.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    globalThis.toastr?.info('ใส่ตัวอย่างไว้ท้ายแชทแล้ว ปิดหน้าตั้งค่าเพื่อดู · หายเองตอนส่งข้อความหรือเปลี่ยนแชท', 'Auto Quote');
+}
+
+function removeExampleFromChat() {
+    document.querySelectorAll('#chat .aq_preview_mes').forEach(n => n.remove());
 }
 
 // ---------------------------------------------------------------- stale-code check
@@ -410,6 +687,11 @@ function init() {
 
     const { eventSource, event_types: E } = ctx();
     eventSource.once(E.APP_READY, () => { renderBar(); if (isSendBox(document.activeElement)) showBar(); });
+    // the in-chat example must be gone before SillyTavern touches the message list
+    for (const ev of ['CHAT_CHANGED', 'MESSAGE_SENT', 'MESSAGE_RECEIVED', 'GENERATION_STARTED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_EDITED']) {
+        if (E[ev]) eventSource.on(E[ev], removeExampleFromChat);
+    }
+    if (E.MESSAGE_SENT) eventSource.on(E.MESSAGE_SENT, () => { hist.typing = false; });
 
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForNewVersion(); });
     setTimeout(checkForNewVersion, 3000);
