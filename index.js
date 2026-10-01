@@ -1,5 +1,5 @@
 /*
- * Auto Quote — SillyTavern UI extension
+ * Typing Buddy — SillyTavern UI extension
  *
  *   • double space closes the innermost open mark: “hello␣␣ → “hello”␣
  *     (works for “ ” ‘ ’ * ** *** ( 「 『 … — the list is editable; iOS/Gboard's
@@ -17,8 +17,8 @@
 import { BLOCKQUOTE, DEFAULT_PAIRS, DEFAULT_TOOLBAR, buildTable, correctQuote, openerInsert, pendingClose, toggleBlockquote, toggleWrap } from './lib.js';
 
 const MODULE = 'auto_quote';
-const LOG = '[AutoQuote]';
-const VERSION = '1.1.0'; // keep in sync with manifest.json
+const LOG = '[TypingBuddy]';
+const VERSION = '1.2.0'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 
 const DEFAULTS = Object.freeze({
@@ -241,7 +241,18 @@ function onFocusIn(e) {
     if (!(el instanceof HTMLTextAreaElement)) return;
     last = { el, value: el.value };
     spaceMark = null;
-    if (isSendBox(el)) showBar();
+    // SillyTavern focuses the box by itself when a chat opens (no keyboard on phones), so
+    // focus alone doesn't show the bar — only focus that follows a real tap on the box does.
+    if (isSendBox(el) && Date.now() - lastTapOnBox < 1500) showBar();
+}
+
+/** Time of the last real (not scripted) tap or click on the send box. */
+let lastTapOnBox = 0;
+
+function onUserTouch(e) {
+    if (!e.isTrusted || !isSendBox(e.target)) return;
+    if (e.type === 'pointerdown') lastTapOnBox = Date.now();
+    else if (document.activeElement === e.target) showBar(); // tapped a box that was already focused: no focusin
 }
 
 function onFocusOut(e) {
@@ -367,7 +378,7 @@ function renderSettings() {
     <div id="aq_settings" class="aq_settings" data-aq-off>
         <div class="inline-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>Auto Quote <small class="aq_version">v${VERSION}</small></b>
+                <b>Typing Buddy <small class="aq_version">v${VERSION}</small></b>
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">
@@ -438,7 +449,7 @@ function renderSettings() {
         el.checked = !!s[key];
         el.addEventListener('change', () => { s[key] = el.checked; save(); after?.(); });
     };
-    const refreshBar = () => { renderBar(); if (isSendBox(document.activeElement)) showBar(); else hideBar(); };
+    const refreshBar = () => { renderBar(); if (!s.enabled || !s.toolbar) hideBar(); else updateBar(); };
     bind('aq_enabled', 'enabled', refreshBar);
     bind('aq_autoclose', 'autoClose');
     bind('aq_spaceafter', 'spaceAfterClose');
@@ -488,7 +499,7 @@ function renderSettings() {
     $id('aq_ex_vars').addEventListener('click', e => {
         const row = e.target.closest('[data-var]');
         if (!row) return;
-        navigator.clipboard?.writeText(`var(${row.dataset.var})`).then(() => globalThis.toastr?.success(`คัดลอก var(${row.dataset.var}) แล้ว`, 'Auto Quote'), () => {});
+        navigator.clipboard?.writeText(`var(${row.dataset.var})`).then(() => globalThis.toastr?.success(`คัดลอก var(${row.dataset.var}) แล้ว`, 'Typing Buddy'), () => {});
     });
 }
 
@@ -623,7 +634,7 @@ function showExampleInChat() {
     mes.querySelector('.mes_block')?.append(close);
     chat.append(mes);
     mes.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    globalThis.toastr?.info('ใส่ตัวอย่างไว้ท้ายแชทแล้ว ปิดหน้าตั้งค่าเพื่อดู · หายเองตอนส่งข้อความหรือเปลี่ยนแชท', 'Auto Quote');
+    globalThis.toastr?.info('ใส่ตัวอย่างไว้ท้ายแชทแล้ว ปิดหน้าตั้งค่าเพื่อดู · หายเองตอนส่งข้อความหรือเปลี่ยนแชท', 'Typing Buddy');
 }
 
 function removeExampleFromChat() {
@@ -651,7 +662,7 @@ async function checkForNewVersion() {
     } catch { return; }
     if (!remote || remote === VERSION) return;
     versionToastShown = true;
-    globalThis.toastr?.info(`ติดตั้ง v${esc(remote)} ไว้แล้ว แต่หน้านี้ยังรัน v${VERSION} อยู่<br>แตะที่นี่เพื่อโหลดเวอร์ชันใหม่`, 'Auto Quote', {
+    globalThis.toastr?.info(`ติดตั้ง v${esc(remote)} ไว้แล้ว แต่หน้านี้ยังรัน v${VERSION} อยู่<br>แตะที่นี่เพื่อโหลดเวอร์ชันใหม่`, 'Typing Buddy', {
         timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false,
         onclick: () => reloadWithFreshFiles(),
     });
@@ -671,7 +682,7 @@ async function reloadWithFreshFiles() {
 // ---------------------------------------------------------------- init
 
 function init() {
-    if (globalThis.AutoQuote) return; // loaded twice
+    if (globalThis.TypingBuddy) return; // loaded twice
     settings();
     rebuildTable();
     renderSettings();
@@ -683,10 +694,14 @@ function init() {
     document.addEventListener('selectionchange', scheduleBarUpdate);
     document.addEventListener('keyup', e => { if (isSendBox(e.target)) scheduleBarUpdate(); });
     document.addEventListener('pointerup', e => { if (isSendBox(e.target)) scheduleBarUpdate(); });
-    if (isSendBox(document.activeElement)) showBar();
+    document.addEventListener('pointerdown', onUserTouch, true);
+    document.addEventListener('click', onUserTouch, true);
+    // typing into a box that was focused by script (desktop) shows the bar too
+    document.addEventListener('keydown', e => { if (e.isTrusted && isSendBox(e.target) && document.activeElement === e.target) showBar(); }, true);
 
     const { eventSource, event_types: E } = ctx();
-    eventSource.once(E.APP_READY, () => { renderBar(); if (isSendBox(document.activeElement)) showBar(); });
+    eventSource.once(E.APP_READY, renderBar);
+    if (E.CHAT_CHANGED) eventSource.on(E.CHAT_CHANGED, hideBar);
     // the in-chat example must be gone before SillyTavern touches the message list
     for (const ev of ['CHAT_CHANGED', 'MESSAGE_SENT', 'MESSAGE_RECEIVED', 'GENERATION_STARTED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_EDITED']) {
         if (E[ev]) eventSource.on(E[ev], removeExampleFromChat);
@@ -695,7 +710,7 @@ function init() {
 
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForNewVersion(); });
     setTimeout(checkForNewVersion, 3000);
-    globalThis.AutoQuote = { VERSION, settings, checkForNewVersion, reloadWithFreshFiles, get table() { return table; } };
+    globalThis.TypingBuddy = { VERSION, settings, checkForNewVersion, reloadWithFreshFiles, get table() { return table; } };
     console.log(LOG, 'loaded', `v${VERSION}`);
 }
 
