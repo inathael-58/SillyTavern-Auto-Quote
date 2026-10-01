@@ -76,13 +76,18 @@ export function buildTable(text) {
     const openChars = new Set(ALWAYS_OPENING);
     for (const p of pairs) if (!p.sym) openChars.add(p.open.at(-1));
 
-    return { pairs, runs, tokens, openChars, byOpen: new Map(pairs.map(p => [p.open, p])) };
+    /** first characters of all tokens — most characters of a text are none of them */
+    const tokenStarts = new Set(tokens.map(t => t.s[0]));
+
+    return { pairs, runs, tokens, tokenStarts, openChars, byOpen: new Map(pairs.map(p => [p.open, p])) };
 }
 
 /** Start of the paragraph the offset is in — marks are never matched across a blank line. */
 function paragraphStart(text) {
-    const m = /\n[ \t]*\n(?![\s\S]*\n[ \t]*\n)/.exec(text);
-    return m ? m.index + m[0].length : 0;
+    const re = /\n[ \t]*\n/g;
+    let start = 0, m;
+    while ((m = re.exec(text))) { start = m.index + m[0].length; re.lastIndex = m.index + 1; }
+    return start;
 }
 
 /**
@@ -125,7 +130,7 @@ export function openMarks(text, table) {
             continue;
         }
 
-        const tok = table.tokens.find(t => text.startsWith(t.s, i));
+        const tok = table.tokenStarts.has(ch) ? table.tokens.find(t => text.startsWith(t.s, i)) : null;
         if (tok) {
             const prev = text[i - 1], next = text[i + tok.s.length];
             const followedByText = next === undefined || !WS.test(next);
