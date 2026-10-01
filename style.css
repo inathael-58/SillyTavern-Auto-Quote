@@ -1,0 +1,145 @@
+/* ---------- row of marks above the send box ---------- */
+
+#send_form.aq_host {
+    position: relative;
+}
+
+#aq_bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 4px);
+    z-index: 35;
+    display: flex;
+    justify-content: center;
+    padding: 0 6px;
+    pointer-events: none; /* only the buttons take taps; the chat behind stays usable */
+}
+
+#aq_bar[hidden] {
+    display: none;
+}
+
+#aq_bar .aq_row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    pointer-events: auto;
+}
+
+#aq_bar .aq_scroll {
+    display: flex;
+    gap: 4px;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+}
+
+#aq_bar .aq_scroll::-webkit-scrollbar {
+    display: none;
+}
+
+#aq_bar .aq_btn {
+    flex: 0 0 auto;
+    min-width: 34px;
+    height: 32px;
+    margin: 0;
+    padding: 0 8px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    background-color: var(--SmartThemeBlurTintColor);
+    color: var(--SmartThemeBodyColor);
+    font-family: inherit;
+    font-size: 17px;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+#aq_bar .aq_btn:active {
+    border-color: var(--SmartThemeQuoteColor);
+}
+
+@media (hover: hover) {
+    #aq_bar .aq_btn:hover {
+        border-color: var(--SmartThemeQuoteColor);
+    }
+}
+
+#aq_bar .aq_close {
+    color: var(--SmartThemeQuoteColor);
+    border-color: var(--SmartThemeQuoteColor);
+    font-weight: bold;
+}
+
+#aq_bar .aq_close[hidden] {
+    display: none;
+}
+
+/* with text selected the buttons wrap it, so show both ends */
+#aq_bar .aq_w,
+#aq_bar.aq_selecting .aq_o {
+    display: none;
+}
+
+#aq_bar.aq_selecting .aq_w {
+    display: inline;
+    font-size: 14px;
+}
+
+/* ---------- settings panel ---------- */
+
+.aq_settings .aq_set_title {
+    margin: 12px 0 4px;
+    font-weight: bold;
+}
+
+.aq_settings .aq_indent {
+    margin-left: 1.6em;
+}
+
+.aq_settings .aq_note {
+    display: block;
+    opacity: 0.7;
+    margin: 2px 0 4px;
+}
+
+.aq_settings .aq_field {
+    display: block;
+    margin-top: 6px;
+}
+
+.aq_settings .aq_field small {
+    opacity: 0.7;
+}
+
+.aq_settings #aq_pairs {
+    width: 100%;
+    font-size: 15px;
+}
+
+.aq_btns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.aq_btns .menu_button {
+    margin: 0;
+    width: auto;
+    padding: 4px 10px;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.aq_version {
+    opacity: 0.6;
+    font-weight: normal;
+}
