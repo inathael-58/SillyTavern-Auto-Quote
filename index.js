@@ -18,7 +18,7 @@ import { BLOCKQUOTE, DEFAULT_PAIRS, DEFAULT_TOOLBAR, buildTable, correctQuote, o
 
 const MODULE = 'auto_quote';
 const LOG = '[TypingBuddy]';
-const VERSION = '1.2.0'; // keep in sync with manifest.json
+const VERSION = '1.2.1'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 
 const DEFAULTS = Object.freeze({
@@ -47,12 +47,19 @@ const ctx = () => SillyTavern.getContext();
 const $id = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// Called on every key press: getContext() builds a large object each call, so keep
+// SillyTavern's settings object (it is never replaced) and fill defaults once.
+let extSettings = null;
+let filled = null;
 function settings() {
-    const ext = ctx().extensionSettings;
-    if (!ext[MODULE]) ext[MODULE] = {};
-    const s = ext[MODULE];
-    for (const [k, v] of Object.entries(DEFAULTS)) {
-        if (s[k] === undefined) s[k] = v;
+    extSettings ??= ctx().extensionSettings;
+    if (!extSettings[MODULE]) extSettings[MODULE] = {};
+    const s = extSettings[MODULE];
+    if (s !== filled) {
+        for (const [k, v] of Object.entries(DEFAULTS)) {
+            if (s[k] === undefined) s[k] = v;
+        }
+        filled = s;
     }
     return s;
 }
@@ -133,7 +140,7 @@ function histRecord(el, prev, kind) {
     const now = Date.now();
     if (kind === 'type' && hist.typing && now - hist.at < GROUP_MS) hist.values[hist.index] = v;
     else histPush(v);
-    hist.typing = kind === 'type' && !/\s$/.test(v.slice(0, el.selectionStart));
+    hist.typing = kind === 'type' && !/\s/.test(v[el.selectionStart - 1] ?? '');
     hist.at = now;
 }
 
@@ -312,12 +319,16 @@ function hideBar() {
     if (bar) bar.hidden = true;
 }
 
-let barQueued = false;
+// The bar's state (close button, undo) is refreshed once typing pauses, not on every key.
+let barTimer = null;
 function scheduleBarUpdate() {
-    if (barQueued || !bar || bar.hidden) return;
-    barQueued = true;
-    requestAnimationFrame(() => { barQueued = false; updateBar(); });
+    if (!bar || bar.hidden) return;
+    clearTimeout(barTimer);
+    barTimer = setTimeout(updateBar, 150);
 }
+
+/** Write to the DOM only when something changes, so a refresh costs no layout. */
+const setHidden = (node, hidden) => { if (node.hidden !== hidden) node.hidden = hidden; };
 
 function updateBar() {
     if (!bar || bar.hidden) return;
@@ -327,13 +338,13 @@ function updateBar() {
     bar.classList.toggle('aq_selecting', selected);
     const btn = bar.querySelector('.aq_close');
     const hit = settings().closeButton && !selected && inScope(el) ? pendingClose(el.value.slice(0, el.selectionStart), table) : null;
-    btn.hidden = !hit;
-    if (hit) btn.textContent = hit.close;
+    setHidden(btn, !hit);
+    if (hit && btn.textContent !== hit.close) btn.textContent = hit.close;
     const showUndo = settings().undoButton;
     const u = bar.querySelector('.aq_undo'), r = bar.querySelector('.aq_redo');
-    u.hidden = !showUndo;
+    setHidden(u, !showUndo);
     u.classList.toggle('aq_off', !canUndo(el)); // not `disabled`: taps on a disabled button would move focus out of the box
-    r.hidden = !showUndo || !canRedo(el);
+    setHidden(r, !showUndo || !canRedo(el));
 }
 
 function onBarClick(e) {
@@ -697,7 +708,7 @@ function init() {
     document.addEventListener('pointerdown', onUserTouch, true);
     document.addEventListener('click', onUserTouch, true);
     // typing into a box that was focused by script (desktop) shows the bar too
-    document.addEventListener('keydown', e => { if (e.isTrusted && isSendBox(e.target) && document.activeElement === e.target) showBar(); }, true);
+    document.addEventListener('keydown', e => { if (bar?.hidden !== false && e.isTrusted && isSendBox(e.target) && document.activeElement === e.target) showBar(); }, true);
 
     const { eventSource, event_types: E } = ctx();
     eventSource.once(E.APP_READY, renderBar);
