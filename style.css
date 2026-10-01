@@ -1,0 +1,305 @@
+/* ---------- row of marks above the send box ---------- */
+
+#send_form.aq_host {
+    position: relative;
+}
+
+#aq_bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 4px);
+    z-index: 35;
+    display: flex;
+    justify-content: center;
+    padding: 0 6px;
+    pointer-events: none; /* only the buttons take taps; the chat behind stays usable */
+}
+
+#aq_bar[hidden] {
+    display: none;
+}
+
+#aq_bar .aq_row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    pointer-events: auto;
+}
+
+#aq_bar .aq_scroll {
+    display: flex;
+    gap: 4px;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+}
+
+#aq_bar .aq_scroll::-webkit-scrollbar {
+    display: none;
+}
+
+#aq_bar .aq_btn {
+    flex: 0 0 auto;
+    min-width: 34px;
+    height: 32px;
+    margin: 0;
+    padding: 0 8px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    background-color: var(--SmartThemeBlurTintColor);
+    color: var(--SmartThemeBodyColor);
+    font-family: inherit;
+    font-size: 17px;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+#aq_bar .aq_btn:active {
+    border-color: var(--SmartThemeQuoteColor);
+}
+
+@media (hover: hover) {
+    #aq_bar .aq_btn:hover {
+        border-color: var(--SmartThemeQuoteColor);
+    }
+}
+
+#aq_bar .aq_close {
+    color: var(--SmartThemeQuoteColor);
+    border-color: var(--SmartThemeQuoteColor);
+    font-weight: bold;
+}
+
+#aq_bar .aq_btn[hidden] {
+    display: none;
+}
+
+#aq_bar .aq_undo,
+#aq_bar .aq_redo {
+    font-size: 14px;
+}
+
+#aq_bar .aq_btn.aq_off {
+    opacity: 0.4;
+}
+
+/* with text selected the buttons wrap it, so show both ends */
+#aq_bar .aq_w,
+#aq_bar.aq_selecting .aq_o {
+    display: none;
+}
+
+#aq_bar.aq_selecting .aq_w {
+    display: inline;
+    font-size: 14px;
+}
+
+/* ---------- settings panel ---------- */
+
+.aq_tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+}
+
+.aq_tab {
+    padding: 6px 12px;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    cursor: pointer;
+    opacity: 0.65;
+    white-space: nowrap;
+}
+
+.aq_tab.aq_active {
+    opacity: 1;
+    border-color: var(--SmartThemeBorderColor);
+    background-color: var(--SmartThemeBlurTintColor);
+    margin-bottom: -1px;
+}
+
+.aq_page[hidden] {
+    display: none;
+}
+
+.aq_seg {
+    display: flex;
+    gap: 0;
+}
+
+.aq_seg .menu_button {
+    border-radius: 0;
+}
+
+.aq_seg .menu_button:first-child {
+    border-radius: 8px 0 0 8px;
+}
+
+.aq_seg .menu_button:last-child {
+    border-radius: 0 8px 8px 0;
+}
+
+.aq_btns .menu_button.aq_active {
+    border-color: var(--SmartThemeQuoteColor);
+    color: var(--SmartThemeQuoteColor);
+}
+
+#aq_ex_editor[hidden] {
+    display: none;
+}
+
+#aq_ex_text {
+    width: 100%;
+    margin-top: 6px;
+}
+
+/* the example message: SillyTavern's own message markup, so leave its styling to the theme */
+.aq_ex_preview {
+    margin-top: 8px;
+    white-space: normal;
+}
+
+.aq_ex_preview .mes {
+    position: relative;
+    cursor: default;
+}
+
+.aq_preview_mes {
+    outline: 2px dashed var(--SmartThemeQuoteColor);
+    outline-offset: -2px;
+}
+
+.aq_preview_close {
+    width: fit-content;
+    margin: 6px 0 2px auto;
+    padding: 2px 10px;
+    gap: 6px;
+}
+
+.aq_ex_vars {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 6px;
+}
+
+.aq_var {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    cursor: pointer;
+    min-width: 0;
+}
+
+.aq_swatch {
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    /* checkerboard behind, so transparency shows */
+    background-image: conic-gradient(#8884 25%, transparent 0 50%, #8884 0 75%, transparent 0);
+    background-size: 10px 10px;
+}
+
+.aq_noswatch {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-image: none;
+    opacity: 0.7;
+}
+
+.aq_var_text b {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.aq_var_text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.25;
+}
+
+.aq_var_text code,
+.aq_var_text small {
+    font-size: 0.8em;
+    opacity: 0.75;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.aq_settings .aq_note.aq_inline {
+    display: inline;
+    font-weight: normal;
+}
+
+.aq_icon_btn {
+    cursor: pointer;
+    opacity: 0.7;
+    margin-left: 4px;
+}
+
+.aq_settings .aq_set_title {
+    margin: 12px 0 4px;
+    font-weight: bold;
+}
+
+.aq_settings .aq_indent {
+    margin-left: 1.6em;
+}
+
+.aq_settings .aq_note {
+    display: block;
+    opacity: 0.7;
+    margin: 2px 0 4px;
+}
+
+.aq_settings .aq_field {
+    display: block;
+    margin-top: 6px;
+}
+
+.aq_settings .aq_field small {
+    opacity: 0.7;
+}
+
+.aq_settings #aq_pairs {
+    width: 100%;
+    font-size: 15px;
+}
+
+.aq_btns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.aq_btns .menu_button {
+    margin: 0;
+    width: auto;
+    padding: 4px 10px;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.aq_version {
+    opacity: 0.6;
+    font-weight: normal;
+}
