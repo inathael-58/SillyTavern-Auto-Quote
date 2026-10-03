@@ -18,13 +18,16 @@ import { BLOCKQUOTE, DEFAULT_PAIRS, DEFAULT_TOOLBAR, buildTable, correctQuote, o
 
 const MODULE = 'auto_quote';
 const LOG = '[TypingBuddy]';
-const VERSION = '1.2.1'; // keep in sync with manifest.json
+const VERSION = '1.3.0'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 
 const DEFAULTS = Object.freeze({
     enabled: true,
-    autoClose: true,          // double space closes the open mark
-    spaceAfterClose: true,
+    autoClose: true,          // a run of spaces closes the open mark…
+    closeSpaces: 2,           // …this many (2 or 3)
+    closeEnter: false,        // Enter closes the open mark (instead of a new line / sending)
+    closeHold: false,         // holding the space bar closes it (physical keyboards only)
+    spaceAfterClose: true,    // after closing by spaces or hold
     fixDirection: true,       // ” typed after a space → “
     straightToCurly: false,   // " → “ / ”
     toolbar: true,
@@ -185,7 +188,11 @@ function redo(el) {
 
 /** The textarea value after the previous input event (to see what this one changed). */
 let last = { el: null, value: '' };
-/** Set after the user types a space: { el, value, pos } with value[pos - 1] === ' '. */
+/**
+ * Set while the user types a run of spaces: { el, value, pos, count, start } —
+ * value[pos - 1] is the last space, `count` spaces (or ". " from the keyboard's
+ * double-space shortcut, counted as two) start at `start`.
+ */
 let spaceMark = null;
 
 /** Close the innermost open mark: cut [cutFrom, caret) and the whitespace before it, put the closer there. */
@@ -213,22 +220,30 @@ function onInput(e) {
     const s = settings();
     const composing = e.isComposing;
 
-    // second space (or the keyboard's "double space = period" rewrite of it)
+    // one more space in a run (or the keyboard's "double space = period" rewrite of the first two)
     if (s.autoClose && spaceMark?.el === el && !composing) {
-        const { value: A, pos: q } = spaceMark;
+        const { value: A, pos: q, count, start } = spaceMark;
+        const need = Number(s.closeSpaces) === 3 ? 3 : 2;
+        let next = null;
         if (v === A.slice(0, q) + ' ' + A.slice(q) && c === q + 1) {
-            if (closeAt(el, q - 1, c, s.spaceAfterClose)) return;
-        } else if (v === A.slice(0, q - 1) + '. ' + A.slice(q) && c === q + 1) {
-            if (closeAt(el, q - 1, c, s.spaceAfterClose)) return;
-            spaceMark = null;
-            return;
-        } else if (v === A.slice(0, q - 1) + A.slice(q) && c === q - 1) {
+            next = { count: count + 1, start };
+        } else if (count === 1 && v === A.slice(0, q - 1) + '. ' + A.slice(q) && c === q + 1) {
+            next = { count: 2, start: q - 1, period: true };
+        } else if (count === 1 && v === A.slice(0, q - 1) + A.slice(q) && c === q - 1) {
             return; // the keyboard removed the space and is about to insert ". "
+        }
+        if (next) {
+            if (next.count >= need) {
+                if (closeAt(el, next.start, c, s.spaceAfterClose)) return;
+                if (next.period) { spaceMark = null; return; } // nothing open: leave the keyboard's period alone
+            }
+            spaceMark = { el, value: v, pos: c, count: next.count, start: next.start };
+            return;
         }
     }
 
     const inserted = prev !== null && v.length > prev.length;
-    spaceMark = inserted && v[c - 1] === ' ' ? { el, value: v, pos: c } : null;
+    spaceMark = inserted && v[c - 1] === ' ' ? { el, value: v, pos: c, count: 1, start: c - 1 } : null;
 
     // one quote character typed → point it the right way
     if (!composing && inserted && v.length === prev.length + 1 && (s.fixDirection || s.straightToCurly)) {
@@ -241,6 +256,48 @@ function onInput(e) {
             if (want) replaceRange(el, p, p + 1, want);
         }
     }
+}
+
+/** 'closed' / 'pass' while the space bar is held after its first auto-repeat, else null. */
+let holding = null;
+/** When a keydown last said "Enter" — the line break that follows is then already decided. */
+let enterKeyAt = 0;
+
+/** Enter and a held space bar, when they are chosen as ways to close. */
+function onKeyDown(e) {
+    const el = e.target;
+    if (!e.isTrusted || e.isComposing || !(el instanceof HTMLTextAreaElement)) return;
+    if (e.key === ' ' && !e.repeat) { holding = null; return; }
+    if (e.key === 'Enter') enterKeyAt = e.timeStamp;
+    if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey && e.key === 'Enter') return;
+    if (e.key !== 'Enter' && !(e.key === ' ' && e.repeat)) return;
+    if (!inScope(el) || el.selectionStart !== el.selectionEnd) return;
+    const s = settings();
+    const c = el.selectionStart;
+    let handled = false;
+    if (e.key === 'Enter') {
+        // only while something is open; otherwise Enter does what it always does (new line / send)
+        handled = s.closeEnter && closeAt(el, c, c, false);
+    } else if (s.closeHold) {
+        // the first press already typed one space; closeAt replaces it. Later repeats are swallowed.
+        if (holding === null) holding = closeAt(el, c, c, s.spaceAfterClose) ? 'closed' : 'pass';
+        handled = holding === 'closed';
+    }
+    if (handled) {
+        e.preventDefault();
+        e.stopImmediatePropagation(); // keep SillyTavern from sending the message on this Enter
+    }
+}
+
+/** Phone keyboards may report Enter only as a line break being inserted. */
+function onBeforeInput(e) {
+    const el = e.target;
+    if (!e.isTrusted || e.isComposing || !(el instanceof HTMLTextAreaElement)) return;
+    if (e.inputType !== 'insertLineBreak' && e.inputType !== 'insertParagraph') return;
+    if (e.timeStamp - enterKeyAt < 500) return; // keydown saw this Enter (and its modifiers) and let it through
+    if (!settings().closeEnter || !inScope(el) || el.selectionStart !== el.selectionEnd) return;
+    const c = el.selectionStart;
+    if (closeAt(el, c, c, false)) e.preventDefault();
 }
 
 function onFocusIn(e) {
@@ -400,9 +457,21 @@ function renderSettings() {
                 <div class="aq_page" data-page="settings">
                 <label class="checkbox_label"><input type="checkbox" id="aq_enabled"> เปิดใช้งาน</label>
 
+                <div class="aq_set_title">ปิดเครื่องหมายที่เปิดค้างด้วย… <small class="aq_note aq_inline">(เลือกได้หลายแบบ)</small></div>
+                <div class="aq_set_row">
+                    <label class="checkbox_label"><input type="checkbox" id="aq_autoclose"> เว้นวรรคติดกัน</label>
+                    <select id="aq_spaces" class="text_pole aq_select">
+                        <option value="2">2 ครั้ง</option>
+                        <option value="3">3 ครั้ง</option>
+                    </select>
+                </div>
+                <label class="checkbox_label"><input type="checkbox" id="aq_enter"> Enter หนึ่งครั้ง</label>
+                <small class="aq_note aq_indent">ตอนมีเครื่องหมายเปิดค้าง Enter จะปิดให้แทนการขึ้นบรรทัดหรือส่งข้อความ · ปิดครบแล้วกด Enter อีกทีถึงจะขึ้นบรรทัด/ส่งตามปกติ</small>
+                <label class="checkbox_label"><input type="checkbox" id="aq_hold"> กด spacebar ค้าง</label>
+                <small class="aq_note aq_indent">ใช้ได้กับคีย์บอร์ดจริงเท่านั้น (คอม, คีย์บอร์ดบลูทูธ) · คีย์บอร์ดมือถือใช้การกด spacebar ค้างเลื่อนเคอร์เซอร์ และไม่ส่งสัญญาณนี้ให้หน้าเว็บ</small>
+                <label class="checkbox_label"><input type="checkbox" id="aq_spaceafter"> เว้นวรรคหนึ่งช่องหลังปิด <small class="aq_note aq_inline">(แบบเว้นวรรคและกดค้าง)</small></label>
+
                 <div class="aq_set_title">ตอนพิมพ์</div>
-                <label class="checkbox_label"><input type="checkbox" id="aq_autoclose"> เว้นวรรคสองครั้ง = ปิดเครื่องหมายที่เปิดค้างไว้</label>
-                <label class="checkbox_label aq_indent"><input type="checkbox" id="aq_spaceafter"> เว้นวรรคหนึ่งช่องหลังปิด</label>
                 <label class="checkbox_label"><input type="checkbox" id="aq_fixdir"> กลับทิศ “ ” ‘ ’ ที่พิมพ์ผิดด้าน</label>
                 <small class="aq_note">หลังช่องว่างหรือต้นบรรทัดจะเป็นตัวเปิดเสมอ · พิมพ์ตัวเปิดต่อท้ายคำตอนที่มีตัวเปิดค้างอยู่จะกลายเป็นตัวปิด</small>
                 <label class="checkbox_label"><input type="checkbox" id="aq_straight"> เปลี่ยน " ตรง ๆ เป็น “ ” อัตโนมัติ</label>
@@ -463,6 +532,11 @@ function renderSettings() {
     const refreshBar = () => { renderBar(); if (!s.enabled || !s.toolbar) hideBar(); else updateBar(); };
     bind('aq_enabled', 'enabled', refreshBar);
     bind('aq_autoclose', 'autoClose');
+    bind('aq_enter', 'closeEnter');
+    bind('aq_hold', 'closeHold');
+    const spaces = /** @type {HTMLSelectElement} */ ($id('aq_spaces'));
+    spaces.value = String(s.closeSpaces === 3 ? 3 : 2);
+    spaces.addEventListener('change', () => { s.closeSpaces = Number(spaces.value); save(); });
     bind('aq_spaceafter', 'spaceAfterClose');
     bind('aq_fixdir', 'fixDirection');
     bind('aq_straight', 'straightToCurly');
@@ -700,6 +774,9 @@ function init() {
     renderBar();
 
     document.addEventListener('input', onInput, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('keyup', e => { if (e.key === ' ') holding = null; }, true);
+    document.addEventListener('beforeinput', onBeforeInput, true);
     document.addEventListener('focusin', onFocusIn);
     document.addEventListener('focusout', onFocusOut);
     document.addEventListener('selectionchange', scheduleBarUpdate);

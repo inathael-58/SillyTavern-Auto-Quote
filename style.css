@@ -260,6 +260,18 @@
     font-weight: bold;
 }
 
+.aq_settings .aq_set_row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.aq_settings .aq_select {
+    width: auto;
+    margin: 0;
+}
+
 .aq_settings .aq_indent {
     margin-left: 1.6em;
 }
@@ -302,4 +314,8 @@
 .aq_version {
     opacity: 0.6;
     font-weight: normal;
+}
+
+.aq_settings .aq_note.aq_indent {
+    margin-left: 1.6em;
 }
